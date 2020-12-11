@@ -3,11 +3,15 @@ name: a1to5x
 on:
   workflow_dispatch:
      inputs:
+       mode:
+         description: 'Download mode(wget or aria2c or curl)'
+         required: true
+         default: 'wget'
        zipname:
-         description: 'ROM NAME(No file extension: crDroidAndroid-11.0-20201126-tissot-v7.0)'
-         required: false
-       filelink:
-         description: 'ROM LINK(Downloadable link)'
+         description: 'ROM NAME'
+         required: true
+       id:
+         description: 'Gdrive ID'
          required: true
 
 jobs:
@@ -19,37 +23,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
 
-      - name: Initialization environment
+      - id: init
+        name: Initialization environment
         run: |
           sudo -E apt-get -qq update
           sudo -E apt-get -qq install git openjdk-8-jdk wget curl rsync aria2 python python3 unzip device-tree-compiler brotli simg2img img2simg
           pip3 install protobuf
           pip install brotli
+          if [[ ! -z "$(echo ${{ github.event.inputs.id }} | grep "download")" ]]; then
+              id=$(echo ${{ github.event.inputs.id }} | sed 's/&export=download//')
+              id=$(echo ${id} | sed 's#https://drive.google.com/u/0/##' | sed 's#uc?id=##')
+              echo "::set-output name=id::${id}"
+          elif [[ ! -z "$(echo ${{ github.event.inputs.id }} | grep "view")" ]]; then
+              id=$(echo ${{ github.event.inputs.id }} | sed 's#https://drive.google.com/file/d/##' | sed 's#/view##' | cut -d ? -f 1)
+              echo "::set-output name=id::${id}"
+          else
+              id=${{ github.event.inputs.id }}
+              echo "::set-output name=id::${id}"
+          fi
 
       - id: var
         name: Download
         run: |
           echo "Download"
-          if [[ ! -z "${{ github.event.inputs.filelink }}" ]]; then
-              if [[ ! -z "${{ github.event.inputs.zipname }}" ]]; then
-                  aria2c -x16 -j$(nproc) -o "${{ github.event.inputs.zipname }}" ${{ github.event.inputs.filelink }} || wget ${{ github.event.inputs.filelink }} -O "${{ github.event.inputs.zipname }}"
-                  echo "::set-output name=zipname::${{ github.event.inputs.zipname }}"
-              else
-                  aria2c -x16 -j$(nproc) ${{ github.event.inputs.filelink }} || wget ${{ github.event.inputs.filelink }}
-                  NAME="$(ls -lS *.zip | head -1 | awk '{print $9}')"
-                  zipname=${NAME%.*}
-                  echo "::set-output name=zipname::$zipname"
-              fi
-          else
-              echo "The link does not exist"
-              exit 1
+          confirm="$(wget --quiet --save-cookies cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id=${{ steps.init.outputs.id }}' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')"
+          echo $confirm
+          cat cookies.txt
+          echo "${{ steps.init.outputs.id }}"
+          if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
+              wget --load-cookies cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.init.outputs.id }}" -O ${{ github.event.inputs.zipname }}.zip && rm -rf cookies.txt
+          elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
+              aria2c --load-cookies=cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.init.outputs.id }}" -o ${{ github.event.inputs.zipname }}.zip && rm -rf cookies.txt
+          elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
+              curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=${{ steps.init.outputs.id }}" > /dev/null
+              curl -Lb ./cookie "https://drive.google.com/uc?export=download&confirm=`awk '/download/ {print $NF}' ./cookie`&id=${{ steps.init.outputs.id }}" -o ${{ github.event.inputs.zipname }}.zip
+              rm -rf ./cookie
           fi
           ls -al
 
       - name: Payload Extractor
         run: |
           echo "Payload Dumper"
-          unzip ${{ steps.var.outputs.zipname }}.zip payload.bin
+          unzip ${{ github.event.inputs.zipname }}.zip payload.bin
           python3 update-payload-extractor/extract.py payload.bin --output_dir ./
           ls -al
 
@@ -144,13 +159,13 @@ jobs:
           rm system.new.dat
           ls -al
           cd ..
-          mv template ${{ steps.var.outputs.zipname }}
+          mv template ${{ github.event.inputs.zipname }}
           
 
       - name: Upload to Artifact
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ steps.var.outputs.zipname }}
+          name: ${{ github.event.inputs.zipname }}
           path: |
-            ${{ steps.var.outputs.zipname }}
+            ${{ github.event.inputs.zipname }}
           retention-days: 7
