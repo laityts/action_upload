@@ -6,8 +6,8 @@ on:
        mode:
          description: 'Download mode(wget or aria2c or curl)'
          required: true
-         default: 'wget'
-       zipname:
+         default: 'aria2c'
+       filename:
          description: 'ROM NAME'
          required: true
        id:
@@ -40,7 +40,7 @@ jobs:
           pip install brotli
           if [[ ! -z "$(echo ${{ github.event.inputs.id }} | grep "download")" ]]; then
               id=$(echo ${{ github.event.inputs.id }} | sed 's/&export=download//')
-              id=$(echo ${id} | sed 's#https://drive.google.com/u/0/##' | sed 's#uc?id=##')
+              id=$(echo ${id} | sed 's#https://drive.google.com/##' | sed 's#u/0/##' | sed 's#uc?id=##')
               echo "::set-output name=id::${id}"
           elif [[ ! -z "$(echo ${{ github.event.inputs.id }} | grep "view")" ]]; then
               id=$(echo ${{ github.event.inputs.id }} | sed 's#https://drive.google.com/file/d/##' | sed 's#/view##' | cut -d ? -f 1)
@@ -48,6 +48,14 @@ jobs:
           else
               id=${{ github.event.inputs.id }}
               echo "::set-output name=id::${id}"
+          fi
+          NAME="${{ github.event.inputs.filename }}"
+          if [[ ! -z "$(echo ${NAME} | grep ".zip")" ]]; then
+              echo "::set-output name=filename::${NAME%.*}"
+              echo "${{ github.event.inputs.filename }}"
+          else
+              echo "::set-output name=filename::${{ github.event.inputs.filename }}"
+              echo "Null value"
           fi
 
       - id: var
@@ -58,13 +66,14 @@ jobs:
           echo $confirm
           cat cookies.txt
           echo "${{ steps.init.outputs.id }}"
+          echo "${{ steps.init.outputs.filename }}"
           if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
-              wget --load-cookies cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.init.outputs.id }}" -O ${{ github.event.inputs.zipname }}.zip && rm -rf cookies.txt
+              wget --load-cookies cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.init.outputs.id }}" -O ${{ steps.init.outputs.filename }}.zip && rm -rf cookies.txt
           elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
-              aria2c --load-cookies=cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.init.outputs.id }}" -o ${{ github.event.inputs.zipname }}.zip && rm -rf cookies.txt
+              aria2c --load-cookies=cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.init.outputs.id }}" -o ${{ steps.init.outputs.filename }}.zip && rm -rf cookies.txt
           elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
               curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=${{ steps.init.outputs.id }}" > /dev/null
-              curl -Lb ./cookie "https://drive.google.com/uc?export=download&confirm=`awk '/download/ {print $NF}' ./cookie`&id=${{ steps.init.outputs.id }}" -o ${{ github.event.inputs.zipname }}.zip
+              curl -Lb ./cookie "https://drive.google.com/uc?export=download&confirm=`awk '/download/ {print $NF}' ./cookie`&id=${{ steps.init.outputs.id }}" -o ${{ steps.init.outputs.filename }}.zip
               rm -rf ./cookie
           fi
           ls -al
@@ -72,7 +81,8 @@ jobs:
       - name: Payload Extractor
         run: |
           echo "Payload Dumper"
-          unzip ${{ github.event.inputs.zipname }}.zip payload.bin
+          unzip ${{ steps.init.outputs.filename }}.zip payload.bin
+          rm -rf ${{ steps.init.outputs.filename }}.zip
           python3 update-payload-extractor/extract.py payload.bin --output_dir ./
           ls -al
 
@@ -167,34 +177,38 @@ jobs:
           rm system.new.dat
           ls -al
           cd ..
-          mv template ${{ github.event.inputs.zipname }}
-          zip -q -r ${{ github.event.inputs.zipname }}.zip ${{ github.event.inputs.zipname }}
+          mv template ${{ steps.init.outputs.filename }}
+          cd ${{ steps.init.outputs.filename }}
+          zip -q -r -9 ${{ steps.init.outputs.filename }}.zip *
+          cd ..
+          mv ${{ steps.init.outputs.filename }}/${{ steps.init.outputs.filename }}.zip ./
           ls -al
 
       - name: Upload to Artifact
         if: github.event.inputs.artifact == 'true'
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ github.event.inputs.zipname }}
+          name: ${{ steps.init.outputs.filename }}
           path: |
-            ${{ github.event.inputs.zipname }}
+            ${{ steps.init.outputs.filename }}
           retention-days: 7
 
       - name: Upload to Release
         if: github.event.inputs.release == 'true'
         uses: softprops/action-gh-release@v1
         with:
-          files: ${{ github.event.inputs.zipname }}.zip
-          name: ${{ github.event.inputs.zipname }}
+          files: ${{ steps.init.outputs.filename }}.zip
+          name: ${{ steps.init.outputs.filename }}
           tag_name: ${{ github.run_id }}
-          body: ${{ github.event.inputs.zipname }} port by Actions_a1to5x
+          body: ${{ steps.init.outputs.filename }} port by Actions_a1to5x
+          body_path: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE }}
           
       - name: Remove old Releases
         uses: dev-drprasad/delete-older-releases@master
         with:
-          keep_latest: 7
+          keep_latest: 10
           delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE }}
