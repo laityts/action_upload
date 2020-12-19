@@ -13,6 +13,14 @@ on:
        id:
          description: 'Gdrive ID'
          required: true
+       artifact:
+         description: 'Upload to Artifact'
+         required: true
+         default: 'true'
+       release:
+         description: 'Upload to Release'
+         required: true
+         default: 'true'
 
 jobs:
   a1to5x:
@@ -160,12 +168,33 @@ jobs:
           ls -al
           cd ..
           mv template ${{ github.event.inputs.zipname }}
-          
+          zip -q -r ${{ github.event.inputs.zipname }}.zip ${{ github.event.inputs.zipname }}
+          ls -al
 
       - name: Upload to Artifact
+        if: github.event.inputs.artifact == 'true'
         uses: actions/upload-artifact@v2
         with:
           name: ${{ github.event.inputs.zipname }}
           path: |
             ${{ github.event.inputs.zipname }}
           retention-days: 7
+
+      - name: Upload to Release
+        if: github.event.inputs.release == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ github.event.inputs.zipname }}.zip
+          name: ${{ github.event.inputs.zipname }}
+          tag_name: ${{ github.run_id }}
+          body: ${{ github.event.inputs.zipname }} port by Actions_a1to5x
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE }}
+          
+      - name: Remove old Releases
+        uses: dev-drprasad/delete-older-releases@master
+        with:
+          keep_latest: 7
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE }}
