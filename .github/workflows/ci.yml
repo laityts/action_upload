@@ -1,0 +1,112 @@
+name: upload
+
+on:
+  workflow_dispatch:
+     inputs:
+       mode:
+         description: 'Downloader(wget,aria2c,curl,axel)'
+         required: true
+         default: 'aria2c'
+       file_name:
+         description: 'File Name'
+         required: false
+       file_url:
+         description: 'File URL'
+         required: false
+       gdrive_url:
+         description: 'Gdrive URL(Share ID)'
+         required: false
+       file_path:
+         description: 'File Path'
+         required: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    continue-on-error: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - id: var
+        name: Get the Gdrive ID
+        run: |
+          if [[ ! -z "$(echo ${{ github.event.inputs.gdrive_url }} | grep "download")" ]]; then
+              gdrive_id=$(echo ${{ github.event.inputs.gdrive_url }} | sed 's/&export=download//')
+              gdrive_id=$(echo ${id} | sed 's#https://drive.google.com/##' | sed 's#u/0/##' | sed 's#uc?id=##')
+              echo "::set-output name=gdrive_id::${gdrive_id}"
+          elif [[ ! -z "$(echo ${{ github.event.inputs.gdrive_url }} | grep "view")" ]]; then
+              gdrive_id=$(echo ${{ github.event.inputs.gdrive_url }} | sed 's#https://drive.google.com/file/d/##' | sed 's#/view##' | cut -d ? -f 1)
+              echo "::set-output name=gdrive_id::${gdrive_id}"
+          elif [[ ! -z "$(echo ${{ github.event.inputs.gdrive_url }} | grep "confirm")" ]]; then
+              gdrive_id=$(echo ${{ github.event.inputs.gdrive_url }} | sed 's#https://drive.google.com/u/0/uc?export=download&confirm=ttx1&id=##')
+              echo "::set-output name=gdrive_id::${gdrive_id}"
+          else
+              gdrive_id=${{ github.event.inputs.gdrive_url }}
+              echo "::set-output name=gdrive_id::${gdrive_id}"
+          fi
+
+      - name: Download
+        uses: ./
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          run: |
+            echo "Downloader: ${{ github.event.inputs.mode }}"
+            cd ${{ secrets.ROOT }}/${{ github.event.inputs.file_path }}
+            ls
+            confirm="$(wget --quiet --save-cookies cookies.txt --keep-session-cookies --no-check-certificate 'https://docs.google.com/uc?export=download&id=${{ steps.var.outputs.gdrive_id }}' -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p')"
+            echo "confirm: $confirm"
+            echo "gdrive_id: ${{ steps.var.outputs.gdrive_id }}"
+            if [[ ! -z "${{ github.event.inputs.file_name }}" ]]; then
+                if [[ ! -z "${{ github.event.inputs.gdrive_url }}" ]]; then
+                    if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
+                        wget --load-cookies cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.var.outputs.gdrive_id }}" -O ${{ github.event.inputs.file_name }} && rm -rf cookies.txt
+                    elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
+                        aria2c --load-cookies=cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.var.outputs.gdrive_id }}" -o ${{ github.event.inputs.file_name }} && rm -rf cookies.txt
+                    elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
+                        curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=${{ steps.var.outputs.gdrive_id }}" > /dev/null
+                        curl -Lb ./cookie "https://drive.google.com/uc?export=download&confirm=`awk '/download/ {print $NF}' ./cookie`&id=${{ steps.var.outputs.gdrive_id }}" -o ${{ github.event.inputs.file_name }}
+                        rm -rf ./cookie
+                    fi
+                else
+                    if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
+                        wget ${{ github.event.inputs.file_url }} -O ${{ github.event.inputs.file_name }}
+                    elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
+                        aria2c -x16 -j$(nproc) ${{ github.event.inputs.file_url }} -o ${{ github.event.inputs.file_name }}
+                    elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
+                        curl -L ${{ github.event.inputs.file_url }} -o ${{ github.event.inputs.file_name }}
+                    elif [[ "${{ github.event.inputs.mode }}" == 'axel' ]]; then
+                        axel -n 16 ${{ github.event.inputs.file_url }} -o ${{ github.event.inputs.file_name }}
+                    fi
+                fi        
+            else
+                if [[ ! -z "${{ github.event.inputs.gdrive_url }}" ]]; then
+                    if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
+                        wget --content-disposition --load-cookies cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.var.outputs.gdrive_id }}" && rm -rf cookies.txt
+                    elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
+                        aria2c --load-cookies=cookies.txt "https://docs.google.com/uc?export=download&confirm="${confirm}"&id=${{ steps.var.outputs.gdrive_id }}" && rm -rf cookies.txt
+                    elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
+                        curl -c ./cookie -s -L "https://drive.google.com/uc?export=download&id=${{ steps.var.outputs.gdrive_id }}" > /dev/null
+                        curl -OLb ./cookie "https://drive.google.com/uc?export=download&confirm=`awk '/download/ {print $NF}' ./cookie`&id=${{ steps.var.outputs.gdrive_id }}"
+                        rm -rf ./cookie
+                    fi
+                else
+                    if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
+                        wget --content-disposition -c ${{ github.event.inputs.file_url }}
+                    elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
+                        aria2c -x16 -j$(nproc) ${{ github.event.inputs.file_url }}             
+                    elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
+                        curl -OL ${{ github.event.inputs.file_url }}
+                    elif [[ "${{ github.event.inputs.mode }}" == 'axel' ]]; then
+                        axel -n 16 ${{ github.event.inputs.file_url }}
+                    fi
+                fi
+            fi
+            chown -R www-data:www-data ${{ secrets.ROOT }}/${{ github.event.inputs.file_path }}
+            rm -rf cookies.txt
+            tree
+            ls -al
+            
