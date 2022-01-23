@@ -13,10 +13,6 @@ on:
        id:
          description: 'Gdrive ID'
          required: true
-       artifact:
-         description: 'Upload to Artifact'
-         required: true
-         default: 'true'
        release:
          description: 'Upload to Release'
          required: true
@@ -78,121 +74,6 @@ jobs:
           fi
           ls -al
 
-      - name: Payload Extractor
-        run: |
-          echo "Payload Dumper"
-          unzip ${{ steps.init.outputs.filename }}.zip payload.bin
-          rm -rf ${{ steps.init.outputs.filename }}.zip
-          python3 update-payload-extractor/extract.py payload.bin --output_dir ./
-          ls -al
-
-      - name: Patching Fstab
-        run: |
-          mkdir system/
-          sudo mount system.img system/
-          fstab="system/system/vendor/etc/fstab.qcom"
-          sudo sed -i 's/,slotselect//g' $fstab
-          sudo sed -i 's/,verify//g' $fstab
-          sudo sed -i 's/forceencrypt/encryptable/g' $fstab
-          sudo sed -i 's/fileencryption=ice/encryptable=footer/g' $fstab
-          sudo cp system/system/vendor/etc/fstab.qcom output/fstab.qcom
-          cat system/system/vendor/etc/fstab.qcom
-          sudo umount system
-          sudo rm -rf system
-    
-      - name: Mkbootimg
-        run: |
-          echo "mkbooting"
-          mv boot.img mkbootimg/
-          cd mkbootimg
-          ./mkboot boot.img boot
-          rm boot.img
-          cd boot
-          ls -al
-          cd ../../
-
-      - name: Patching device tree blobs
-        run: |
-          mv mkbootimg/boot/kernel ./image.gz-dtb
-          ./split-appended-dtb image.gz-dtb
-          ls -al
-          rm image.gz-dtb
-          temp=$(ls -lS *.dtb | head -1 | awk '{print $9}')
-          echo temp: $temp
-          dtb=${temp##* }
-          dts=${dtb%.*}.dts
-          echo dtb: $dtb
-          echo dts: $dts
-          dtc -q -I dtb -O dts -o $dts $dtb
-          rm $dtb
-          echo rm: $dtb
-          sed -i '/parts/{n;d;}' $dts
-          sed -i '/vbmeta/d' $dts
-          sed -i '/android,system/{n;d;}' $dts
-          sed -i '/android,system/{n;d;}' $dts
-          sed -i '/android,system/{n;d;}' $dts
-          sed -i '/android,system/d' $dts
-          sed -i '/,discard/{n;s/,slotselect//;}' *.dts
-          sed -i 'N;/\n.*,slotselect/!P;D' $dts
-          sed -i '/,slotselect/{n;d;}' $dts
-          sed -i '/,slotselect/{n;d;}' $dts
-          sed -i '/,slotselect/d' $dts
-          sed -i '/,fstab/r flags.txt' $dts
-          sed -i '/,fstab/G' $dts
-          sed -i '/android,firmware/{n;d;}' $dts
-          sed -i 's/,avb//g' $dts
-          sed -i '/,slotselect/{n;s/disable/ok/;}' $dts
-          sed -i 's/,slotselect//g' $dts
-          dtc -q -I dts -O dtb -o $dtb $dts
-          mv *.dts output/
-          cat kernel *.dtb > image.gz-dtb
-          echo "cat..."
-          ls -al
-          mv image.gz-dtb mkbootimg/boot/kernel
-          sed -i 's/veritykeyid=id:\w*//g' mkbootimg/boot/img_info
-          cat mkbootimg/boot/img_info
-          cp mkbootimg/boot/img_info output/
-          cd mkbootimg
-          ./mkboot boot boot.img
-          cd ..
-          
-      - name: MakeMeSAR
-        run: |
-          mkdir tmp
-          mv mkbootimg/boot.img tmp
-          cd tmp
-          ../magiskboot unpack -h boot.img
-          cp -f ../ramdisk-sar.cpio ramdisk.cpio
-          ../magiskboot repack boot.img
-          ls -al
-          cd ..
-          
-      - name: img2sdat && brotli
-        run: |
-          mv tmp/new-boot.img template/boot.img
-          mv system.img template/system.img
-          cd template
-          ../rimg2sdat.py -c system.img
-          rm system.img
-          rm system.new.dat
-          ls -al
-          cd ..
-          mv template ${{ steps.init.outputs.filename }}
-          cd ${{ steps.init.outputs.filename }}
-          zip -q -r -9 ${{ steps.init.outputs.filename }}.zip *
-          cd ..
-          mv ${{ steps.init.outputs.filename }}/${{ steps.init.outputs.filename }}.zip ./
-          ls -al
-
-      - name: Upload to Artifact
-        if: github.event.inputs.artifact == 'true'
-        uses: actions/upload-artifact@v2
-        with:
-          name: ${{ steps.init.outputs.filename }}
-          path: |
-            ${{ steps.init.outputs.filename }}
-          retention-days: 7
-
       - name: Upload to Release
         if: github.event.inputs.release == 'true'
         uses: softprops/action-gh-release@v1
@@ -200,15 +81,6 @@ jobs:
           files: ${{ steps.init.outputs.filename }}.zip
           name: ${{ steps.init.outputs.filename }}
           tag_name: ${{ github.run_id }}
-          body: ${{ steps.init.outputs.filename }} port by Actions_a1to5x
-          body_path: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE }}
-          
-      - name: Remove old Releases
-        uses: dev-drprasad/delete-older-releases@master
-        with:
-          keep_latest: 10
-          delete_tags: true
+          body: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE }}
